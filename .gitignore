@@ -1,0 +1,7 @@
+./test_data
+./output
+*.jpg
+*.png
+*.pdf
+*.txt
+*.json
