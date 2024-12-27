@@ -14,6 +14,10 @@ hand_write_digit_ocr = PaddleOCR(
     rec_model_dir='./ch_PP-OCRv4_rec_hand_infer/',
     rec_algorithm='SVTR_LCNet',
     max_text_length=3,  # 限制最大长度为3（最大2位数）
+    # 方案1：使用内置的数字字典
+    # rec_char_dict_path='ppocr/utils/dict/en_dict.txt',  # 使用英文字典，包含数字
+    # 或者方案2：使用绝对路径
+    # rec_char_dict_path=os.path.abspath('./ppocr/utils/dict/digit_dict.txt'),
     drop_score=0.3  # 降低阈值以提高召回率
 )
 
@@ -107,7 +111,7 @@ def process_file(file_path):
                         
                         # 只保留数字
                         text = ''.join(c for c in text if c.isdigit())
-                        if text and confidence > 0.3:
+                        if text :
                             try:
                                 score = int(text)
                                 if 0 <= score <= 100:
@@ -196,29 +200,28 @@ def process_single_page(image):
     scores = []
     score_confidences = []  # 添加置信度列表
     score_idx = 0
+    print(len(score_column))
     for score_img in score_column:
-        cv2.imwrite(f'./output/score_column_{score_idx}.jpg', score_img)
+        # processed_img = preprocess_score_image(score_img)
+        processed_img = score_img
+        cv2.imwrite(f'./output/score_column_process_{score_idx}.jpg', processed_img)
         score_idx += 1
-        score_results = hand_write_digit_ocr.ocr(score_img, cls=True)
+        # assert processed_img is not None
+        score_results = hand_write_digit_ocr.ocr(processed_img, cls=True) 
         if score_results:
             for line in score_results:
                 if line:
                     for item in line:
                         text = item[1][0]
                         confidence = item[1][1]
-                        # 打印原始识别结果和置信度
-                        print(f"原始识别文本: {text}, 置信度: {confidence:.3f}")
-                        # 只保留数字
-                        text = ''.join(c for c in text if c.isdigit())
-                        if text and confidence > 0.3:
-                            try:
-                                score = int(text)
-                                if 0 <= score <= 100:
-                                    scores.append(str(score))
-                                    score_confidences.append(confidence)  # 保存对应的置信度
-                            except:
-                                continue
-
+                        print(f'score_results: {text}, confidence is: {confidence}')
+                        # 后处理识别结果
+                        processed_score, processed_confidence = post_process_score(text, confidence)
+                        if processed_score:
+                            scores.append(processed_score)
+                            score_confidences.append(processed_confidence)
+        else:
+            print('score_results is None')
     
     
     # 打印调试信息
@@ -228,7 +231,7 @@ def process_single_page(image):
     print("\n评分识别结果:")
     for score, conf in zip(scores, score_confidences):
         print(f"分数: {score}, 置信度: {conf:.3f}")
-    print(len(table_data), len(scores))
+    print('debug',len(table_data), len(scores))
     return table_data, scores, score_confidences  # 返回置信度
 
 def merge_nearby_lines(coordinates, threshold=20):
@@ -286,7 +289,7 @@ def detect_vertical_lines(image):
     x_coordinates = []
     for contour in contours:
         x, _, w, _ = cv2.boundingRect(contour)
-        print(x, w)
+        # print(x, w)
         x_coordinates.append(x + w//2)
     print('检测到的原始垂直线数量:', len(x_coordinates))
     
@@ -303,7 +306,7 @@ def detect_horizontal_lines(image):
     # 转换为灰度图
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # 二��化
+    # 二值化
     _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
     
     # 定义水平线检测核
@@ -356,7 +359,7 @@ def extract_name_column(image):
     print(horizontal_lines)
     
     # 画出所有检测到的线
-    draw_all_lines(image, vertical_lines, horizontal_lines, 'debug_all_lines.jpg')
+    draw_all_lines(image, vertical_lines, horizontal_lines, './output/debug_all_lines.jpg')
     
     if len(vertical_lines) < 5:  # 确保至少检测到5条垂直线
         print("警告：未能检测到足够的垂直线，使用备用方法")
@@ -368,7 +371,7 @@ def extract_name_column(image):
         name_w = int(column_widths[3])
     else:
         # 使用检测到的垂直线确定姓名的位置
-        # 姓名是第2,3列，以使用第2和第4条垂直线作为边界
+        # 姓是第2,3列，以使用第2和第4条垂直线作为边界
         name_x = vertical_lines[1]
         name_w = vertical_lines[3] - vertical_lines[1]
     first_horizontal_line = horizontal_lines[0]
@@ -397,8 +400,8 @@ def extract_score_column(image):
     horizontal_lines = detect_horizontal_lines(image)
     print(vertical_lines)
     print(horizontal_lines)
-    if len(vertical_lines) < 5:  # 确保至少检测到5条垂直线
-        print("警告：未能检测到��够的垂直线，使用备用方法")
+    if len(vertical_lines) < 5:  # 确保至少检测到5条直线
+        print("警告：未能检测到足够的垂直线，使用备用方法")
         # 使用原来的备用方法
         height, width = image.shape[:2]
         column_widths = [width * ratio for ratio in [0.1, 0.15, 0.25, 0.15, 0.15]]
@@ -424,19 +427,69 @@ def extract_score_column(image):
     
     return score_column
 
- 
- 
+def preprocess_score_image(score_img):
+    """预处理分数图像"""
+    # 转换为灰度图
+    gray = cv2.cvtColor(score_img, cv2.COLOR_BGR2GRAY)
+    
+    # 调整图像大小，保持一致的尺寸
+    height = 32  # PaddleOCR推荐的高度
+    ratio = height / gray.shape[0]
+    width = int(gray.shape[1] * ratio)
+    resized = cv2.resize(gray, (width, height))
+    
+    # 使用OTSU自适应阈值进行二值化
+    _, binary = cv2.threshold(resized, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    
+    # 轻微的模糊处理，去除噪点
+    denoised = cv2.GaussianBlur(binary, (3,3), 0)
+    
+    # 轻微的膨胀，使数字更清晰
+    kernel = np.ones((2,2), np.uint8)
+    dilated = cv2.dilate(denoised, kernel, iterations=1)
+    
+    # 转回三通道图像（PaddleOCR需要）
+    result = cv2.cvtColor(dilated, cv2.COLOR_GRAY2BGR)
+    
+    return result
 
+def post_process_score(text, confidence):
+    """后处理识别结果"""
+    # 只保留数字
+    digits = ''.join(c for c in text if c.isdigit())
+    print(f'before mapping digits: {digits} and text is {text}')
+    # 如果识别结果包含字母，尝试转换常见的误识别情况
+    mapping = {
+        'O': '0',
+        'I': '1',
+        'l': '1',
+        'B': '8',
+        'S': '5',
+        'Z': '2',
+        'q': '9',
+        'b': '6',
+        'Q': '9',
+         
+    }
+    digits = ''
+    for char in text:
+        if char in mapping:
+            digits += mapping[char]
+        elif char.isdigit():
+            digits += char
+    if len(digits) >= 3 : 
+        digits = digits[-2:]
+    print(f'after mapping digits: {digits} and text is {text}')
+    
+    score = int(digits)
+        
+    return str(score), confidence
+    
 
 if __name__ == "__main__":
-    import sys
-    
-    # if len(sys.argv) < 2:
-    #     print("使用方法: python ocr.py <文件路径>")
-    #     sys.exit(1)
     
     # file_path = sys.argv[1]
-    file_path = 'test.pdf'
+    file_path = './test_data/test2.pdf'
     file_ext = os.path.splitext(file_path)[1].lower()
     
     try:
