@@ -51,15 +51,12 @@ def ocr_process():
             return jsonify({'error': '处理文件失败'}), 500
             
         # 整理返回数据
-        result = {}
-        result['name'] = [],
-        result['score'] = []    
+        result = {} 
         score_idx = 0
         score_data = []
         while score_idx < len(scores):
                 score_data.append([scores[score_idx], confidences[score_idx]])
                 score_idx += 1
-        result['title'] = table_data[0]
         result['names'] = table_data[1:]
         result['score'] = score_data
         
@@ -75,4 +72,4 @@ def ocr_process():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True,port=6657)
