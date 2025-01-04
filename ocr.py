@@ -4,6 +4,7 @@ import numpy as np
 from pdf2image import convert_from_path
 from PIL import Image
 import os
+import time
 
 # 初始化两个OCR对象
 # 用于识别手写数字
@@ -11,11 +12,13 @@ hand_write_digit_ocr = PaddleOCR(
     use_angle_cls=True, 
     lang='en',  # 英文模型更适合识别数字
     rec=True,
-    rec_model_dir='./ch_PP-OCRv4_rec_hand_infer/',
+    det_model_dir='./en_PP-OCRv4_det_infer/',
+    # rec_model_dir='./en_PP-OCRv4_server_rec_hand_infer/',
+    rec_model_dir='./multi_mnist_v2/',
     rec_algorithm='SVTR_LCNet',
-    max_text_length=3,  # 限制最大长度为3（最大2位数）
+    max_text_length=4,  # 限制最大长度为3（最大2位数）
     # 方案1：使用内置的数字字典
-    # rec_char_dict_path='ppocr/utils/dict/en_dict.txt',  # 使用英文字典，包含数字
+    rec_char_dict_path='./label_list.txt',  # 使用英文字典，包含数字
     # 或者方案2：使用绝对路径
     # rec_char_dict_path=os.path.abspath('./ppocr/utils/dict/digit_dict.txt'),
     drop_score=0.3  # 降低阈值以提高召回率
@@ -140,9 +143,8 @@ def process_multi_page_pdf(pdf_path):
         # 转换PDF的所有页面
         pages = convert_from_path(pdf_path, dpi=300)
         
-        all_table_data = []
-        all_scores = []
-        all_confidences = []
+        all_table_data = dict()
+
         
         # 处理每一页
         for i, page in enumerate(pages):
@@ -153,20 +155,37 @@ def process_multi_page_pdf(pdf_path):
             cv2.imwrite(f'./output/page_{i+1}.jpg', image)
             
             # 处理单页
-            table_data, scores, confidences = process_single_page(image)
+            name_data, scores, confidences, origin_pictures = process_single_page(image,i)
             
-            if table_data:
-                all_table_data.extend(table_data)
-                all_scores.extend(scores)
-                all_confidences.extend(confidences)
+            for i in range(len(name_data)):
+                name_len = len(name_data[i])
+                scores_dict = dict()
+                key = ''
+                if name_len == 2:
+                    key = name_data[i][0] + '-' + name_data[i][1]
+                else :
+                    key = name_data[i][0]
+                if key not in all_table_data:
+                    data_dict = dict()
+                    data_dict['scores'] = []
+                    data_dict['name'] = name_data[i][0]
+                    data_dict['position'] = name_data[i][0] if name_len == 1 else name_data[i][1]  
+                else:
+                    data_dict = all_table_data[key]
+                scores_dict['score'] = scores[i]
+                scores_dict['confidence'] = confidences[i]
+                scores_dict['origin_picture'] = origin_pictures[i]
+                data_dict['scores'].append(scores_dict)
+                
+                all_table_data[key] = data_dict
         
-        return all_table_data, all_scores, all_confidences
+        return all_table_data
         
     except Exception as e:
         print(f"处理PDF文件时出错: {str(e)}")
         return None, None, None
 
-def process_single_page(image):
+def process_single_page(image, page):
     """处理单个图像页面"""
     # 提取评分列
     score_column = extract_score_column(image)
@@ -181,7 +200,7 @@ def process_single_page(image):
     name_idx = 0
     # 识别评分人和单位
     for name_img in name_column:
-        cv2.imwrite(f'./output/name_column_{name_idx}.jpg', name_img)
+        cv2.imwrite(f'./output/page_{page}_name_column_{name_idx}.jpg', name_img)
         name_idx += 1
         table_results = table_ocr.ocr(name_img, cls=True)
         if table_results:
@@ -199,31 +218,44 @@ def process_single_page(image):
     # 处理评分结果
     scores = []
     score_confidences = []  # 添加置信度列表
+    origin_pictures = []
     score_idx = 0
     print(len(score_column))
     for score_img in score_column:
-        # processed_img = preprocess_score_image(score_img)
-        processed_img = score_img
-        cv2.imwrite(f'./output/score_column_process_{score_idx}.jpg', processed_img)
+        processed_img = preprocess_score_image(score_img)
+        # processed_img = score_img
+        img_idx = time.time()
+        pictures_path = f'./output/idx_{img_idx}page_{page}_score_column_process_{score_idx}.jpg'
+        cv2.imwrite(pictures_path, processed_img)
+        origin_pictures.append(pictures_path)
+        # cv2.imwrite(f'./output/score_column_cropped_{score_idx}.jpg', cropped_img)
         score_idx += 1
         # assert processed_img is not None
         score_results = hand_write_digit_ocr.ocr(processed_img, cls=True) 
+        processed_score, processed_confidence = 0, 0
         if score_results:
+            print(score_results, len(score_results))
             for line in score_results:
                 if line:
                     for item in line:
+                        # print(item)
+                        # box_img= draw_boxes_on_image(processed_img, item)
+                        # process_boxes_path = f'./output/page_{page}_score_column_process_box_{score_idx}.jpg'
+                        # cv2.imwrite(process_boxes_path,box_img )
                         text = item[1][0]
                         confidence = item[1][1]
                         print(f'score_results: {text}, confidence is: {confidence}')
                         # 后处理识别结果
                         processed_score, processed_confidence = post_process_score(text, confidence)
-                        if processed_score:
-                            scores.append(processed_score)
-                            score_confidences.append(processed_confidence)
+            if score_results[0] is None:
+                    print('score_results is None')
+            scores.append(str(processed_score))
+            score_confidences.append(processed_confidence)
+            
         else:
             print('score_results is None')
     
-    
+    print('debug',len(table_data), len(scores), len(origin_pictures))
     # 打印调试信息
     print("表格文本识别结果:")
     for row in table_data:
@@ -231,8 +263,8 @@ def process_single_page(image):
     print("\n评分识别结果:")
     for score, conf in zip(scores, score_confidences):
         print(f"分数: {score}, 置信度: {conf:.3f}")
-    print('debug',len(table_data), len(scores))
-    return table_data, scores, score_confidences  # 返回置信度
+    
+    return table_data, scores, score_confidences,  origin_pictures # 返回置信度
 
 def merge_nearby_lines(coordinates, threshold=20):
     """合并相近的线条坐标
@@ -329,7 +361,7 @@ def detect_horizontal_lines(image):
     print('检测到的原始水平线数量:', len(y_coordinates))
     
     # 合并相近的水平线
-    merged_coordinates = merge_nearby_lines(y_coordinates, threshold=15)  # 水平线可以用更小的阈值
+    merged_coordinates = merge_nearby_lines(y_coordinates, threshold=35)  # 水平线可以用更小的阈值
     print('合并后的水平线数量:', len(merged_coordinates))
     print('合并后的水平线位置:', merged_coordinates)
     
@@ -377,7 +409,7 @@ def extract_name_column(image):
     first_horizontal_line = horizontal_lines[0]
     # 提取评分列
     name_column = []
-    for i in range(len(horizontal_lines) - 1 ):
+    for i in range(1, len(horizontal_lines) - 1 ):
         name_column.append(image[horizontal_lines[i]:horizontal_lines[i+1], name_x:name_x+name_w])
     # name_column.append(image[first_horizontal_line:, name_x:name_x+name_w])
     print(name_x, name_w)
@@ -416,7 +448,7 @@ def extract_score_column(image):
     # 提取评分列
     score_column = []
     for i in range(1, len(horizontal_lines) - 1 ):
-        score_column.append(image[horizontal_lines[i]:horizontal_lines[i+1], score_x:score_x+score_w])
+        score_column.append(image[horizontal_lines[i]:horizontal_lines[i+1]+10, score_x:score_x+score_w])
     # score_column.append(image[first_horizontal_line:, score_x:score_x+score_w])
     print(score_x, score_w)
     # 保存调试图像
@@ -431,25 +463,22 @@ def preprocess_score_image(score_img):
     """预处理分数图像"""
     # 转换为灰度图
     gray = cv2.cvtColor(score_img, cv2.COLOR_BGR2GRAY)
-    
-    # 调整图像大小，保持一致的尺寸
-    height = 32  # PaddleOCR推荐的高度
-    ratio = height / gray.shape[0]
-    width = int(gray.shape[1] * ratio)
-    resized = cv2.resize(gray, (width, height))
-    
+
     # 使用OTSU自适应阈值进行二值化
-    _, binary = cv2.threshold(resized, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
     # 轻微的模糊处理，去除噪点
     denoised = cv2.GaussianBlur(binary, (3,3), 0)
     
-    # 轻微的膨胀，使数字更清晰
+    # 膨胀操作，使数字更清晰
     kernel = np.ones((2,2), np.uint8)
     dilated = cv2.dilate(denoised, kernel, iterations=1)
-    
+
+    # 图像反转（黑白色反转）
+    # dilated = cv2.bitwise_not(dilated)
     # 转回三通道图像（PaddleOCR需要）
     result = cv2.cvtColor(dilated, cv2.COLOR_GRAY2BGR)
+
     
     return result
 
@@ -480,39 +509,54 @@ def post_process_score(text, confidence):
     if len(digits) >= 3 : 
         digits = digits[-2:]
     print(f'after mapping digits: {digits} and text is {text}')
-    
+    if digits == '':
+        return 0, 0
     score = int(digits)
         
     return str(score), confidence
     
+def draw_boxes_on_image(image, ocr_results):
+    """
+    在图像上绘制识别框
+
+    :param image: 输入图像
+    :param ocr_results: OCR 识别结果
+    """
+     
+        # 获取坐标和识别结果
+    box = ocr_results[0]  # 识别框的坐标
+    text, confidence = ocr_results[1]  # 识别的文本和置信度
+    print(box)
+    # 绘制识别框
+    cv2.polylines(image, [np.array(box, dtype=np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
+
+    # 在框上方绘制文本
+    cv2.putText(image, f'{text} ({confidence:.2f})', (int(box[0][0]), int(box[0][1] - 10)), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    return image
 
 if __name__ == "__main__":
-    
+    # EasyOCR
+    # import easyocr
+    # reader = easyocr.Reader(['en'])
+    # image = cv2.imread('./output/score_column_process_3.jpg')
+    # result = reader.readtext(image)
+    # print(result)
     # file_path = sys.argv[1]
-    file_path = './test_data/test2.pdf'
+    file_path = './test_data/test5.pdf'
     file_ext = os.path.splitext(file_path)[1].lower()
     
     try:
         if file_ext == '.pdf':
             # 处理PDF文件
-            table_data, scores, confidences = process_multi_page_pdf(file_path)
+            all_table_data = process_multi_page_pdf(file_path)
         else:
             # 处理图像文件
             table_data, scores, confidences = process_file(file_path)
         # print(len(table_data), len(scores))
-        print(table_data)
-        result = {}
-        score_idx = 0
-        names = []
-        score_data = []
-        while score_idx < len(scores):
-                score_data.append([scores[score_idx], confidences[score_idx]])
-                score_idx += 1
-        result['title'] = table_data[0]
-        result['names'] = table_data[1:]
-        result['score'] = score_data
+        print(all_table_data)
         import json
-        print(json.dumps(result,ensure_ascii=False))
+        print(json.dumps(list(all_table_data.values()),ensure_ascii=False))
 
                     
     except Exception as e:

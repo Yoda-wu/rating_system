@@ -43,22 +43,15 @@ def ocr_process():
         # 根据文件类型处理
         file_ext = os.path.splitext(filename)[1].lower()
         if file_ext == '.pdf':
-            table_data, scores, confidences = process_multi_page_pdf(file_path)
+            all_data = process_multi_page_pdf(file_path)
         else:
-            table_data, scores, confidences = process_file(file_path)
-            
-        if table_data is None:
+            return jsonify({'error': '处理文件失败'}), 500
+        if all_data is None:
             return jsonify({'error': '处理文件失败'}), 500
             
         # 整理返回数据
-        result = {} 
-        score_idx = 0
-        score_data = []
-        while score_idx < len(scores):
-                score_data.append([scores[score_idx], confidences[score_idx]])
-                score_idx += 1
-        result['names'] = table_data[1:]
-        result['score'] = score_data
+        result = list(all_data.values())
+        
         
         # 清理上传的文件
         os.remove(file_path)
