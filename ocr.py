@@ -13,12 +13,12 @@ hand_write_digit_ocr = PaddleOCR(
     lang='en',  # 英文模型更适合识别数字
     rec=True,
     det_model_dir='./en_PP-OCRv4_det_infer/',
-    # rec_model_dir='./en_PP-OCRv4_server_rec_hand_infer/',
-    rec_model_dir='./multi_mnist_v2/',
+    rec_model_dir='./en_PP-OCRv4_server_rec_hand_infer/',
+    # rec_model_dir='./multi_mnist_v3/',
     rec_algorithm='SVTR_LCNet',
     max_text_length=4,  # 限制最大长度为3（最大2位数）
     # 方案1：使用内置的数字字典
-    rec_char_dict_path='./label_list.txt',  # 使用英文字典，包含数字
+    # rec_char_dict_path='./label_list.txt',  # 使用英文字典，包含数字
     # 或者方案2：使用绝对路径
     # rec_char_dict_path=os.path.abspath('./ppocr/utils/dict/digit_dict.txt'),
     drop_score=0.3  # 降低阈值以提高召回率
@@ -224,8 +224,9 @@ def process_single_page(image, page):
     for score_img in score_column:
         processed_img = preprocess_score_image(score_img)
         # processed_img = score_img
+        pwd = os.getcwd()
         img_idx = time.time()
-        pictures_path = f'./output/idx_{img_idx}page_{page}_score_column_process_{score_idx}.jpg'
+        pictures_path = f'{pwd}/output/idx_{img_idx}page_{page}_score_column_process_{score_idx}.jpg'
         cv2.imwrite(pictures_path, processed_img)
         origin_pictures.append(pictures_path)
         # cv2.imwrite(f'./output/score_column_cropped_{score_idx}.jpg', cropped_img)
@@ -406,6 +407,17 @@ def extract_name_column(image):
         # 姓是第2,3列，以使用第2和第4条垂直线作为边界
         name_x = vertical_lines[1]
         name_w = vertical_lines[3] - vertical_lines[1]
+        idx = 0
+        while True:
+            pre = vertical_lines[idx + 1]-vertical_lines[idx]
+            post = vertical_lines[idx + 2]-vertical_lines[idx + 1]
+            ratio = post / pre 
+            if ratio < 1.5 : 
+                idx += 1
+            else:
+                break
+        name_x = vertical_lines[idx+1]
+        name_w = vertical_lines[idx+3] - vertical_lines[idx+1]
     first_horizontal_line = horizontal_lines[0]
     # 提取评分列
     name_column = []
@@ -444,6 +456,18 @@ def extract_score_column(image):
         # 评分列是第4列，所以使用第3和第4条垂直线作为边界
         score_x = vertical_lines[3]
         score_w = vertical_lines[4] - vertical_lines[3]
+        idx = 0
+        while True:
+            pre = vertical_lines[idx + 1]-vertical_lines[idx]
+            post = vertical_lines[idx + 2]-vertical_lines[idx + 1]
+            ratio = post / pre 
+            if ratio < 1.5 : 
+                idx += 1
+            else:
+                break
+        score_x = vertical_lines[idx+3]
+        score_w = vertical_lines[idx+4] - vertical_lines[idx+3]
+    print('xxxxxxxxxxxxxx', vertical_lines[1]-vertical_lines[0], vertical_lines[2]-vertical_lines[1])
     first_horizontal_line = horizontal_lines[1]
     # 提取评分列
     score_column = []
@@ -543,7 +567,7 @@ if __name__ == "__main__":
     # result = reader.readtext(image)
     # print(result)
     # file_path = sys.argv[1]
-    file_path = './test_data/test5.pdf'
+    file_path = './test_data/Test7.pdf'
     file_ext = os.path.splitext(file_path)[1].lower()
     
     try:

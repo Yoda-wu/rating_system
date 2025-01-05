@@ -1,5 +1,6 @@
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from ocr import process_file, process_multi_page_pdf
 
@@ -14,7 +15,7 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
+CORS(app)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -35,12 +36,12 @@ def ocr_process():
         if not allowed_file(file.filename):
             return jsonify({'error': '不支持的文件格式'}), 400
             
-        # 安全地保存文件
+        # # 安全地保存文件
         filename = secure_filename(file.filename)
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
         
-        # 根据文件类型处理
+        # # 根据文件类型处理
         file_ext = os.path.splitext(filename)[1].lower()
         if file_ext == '.pdf':
             all_data = process_multi_page_pdf(file_path)
@@ -49,16 +50,16 @@ def ocr_process():
         if all_data is None:
             return jsonify({'error': '处理文件失败'}), 500
             
-        # 整理返回数据
+        # # 整理返回数据
         result = list(all_data.values())
         
         
-        # 清理上传的文件
-        os.remove(file_path)
+        # # 清理上传的文件
+        # os.remove(file_path)
         
         return jsonify({
-            'status': 0,
-            'data': result
+            'code': 200,
+            'data': result,
         })
         
     except Exception as e:
